@@ -11,11 +11,9 @@ const server = http.createServer(app);
 // GÜNCELLENDİ: Socket.IO için CORS ayarları
 // Artık sadece sizin sitenizden gelen bağlantılara izin verilecek.
 const io = new Server(server, {
-    cors: {
-        origin: "https://benimlobim.site", // SADECE sizin sitenizden gelen isteklere izin ver
-        methods: ["GET", "POST"]
-    }
-});
+app.use(cors({
+    origin: "https://benimlobim.site"
+}));
 
 // GÜNCELLENDİ: Express için CORS ayarları
 // Bu satırı da güncelleyerek izni pekiştirdik.
