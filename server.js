@@ -8,21 +8,21 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
-// GÜNCELLENDİ: Socket.IO için CORS ayarları
-const io = new Server(server, {
-    cors: {
-        origin: "https://benimlobim.site", // SADECE sizin sitenizden gelen isteklere izin ver
-        methods: ["GET", "POST"]
-    }
-});
+// === CORS AYARLARI (TEK VE DOĞRU YER) ===
+// Sunucumuza sadece sizin sitenizden erişim izni veriyoruz.
+const corsOptions = {
+    origin: "https://benimlobim.site",
+    methods: ["GET", "POST"]
+};
 
-// GÜNCELLENDİ: Express için CORS ayarları
-app.use(cors({
-    origin: "https://benimlobim.site"
-}));
+// Hem Express hem de Socket.IO için aynı ayarları kullanıyoruz.
+app.use(cors(corsOptions));
+const io = new Server(server, { cors: corsOptions });
 
+// Gelen verileri JSON formatında okuyabilmek için
 app.use(express.json());
-const PORT = process.env.PORT || 3000; // Render için port ayarı
+// Render'ın bize verdiği portu kullanıyoruz.
+const PORT = process.env.PORT || 3000;
 
 // Oyunumuzun hafızası: Aktif odaları burada tutacağız
 let rooms = {};
@@ -33,21 +33,32 @@ io.on('connection', (socket) => {
 
     socket.on('joinRoom', (data) => {
         const { roomCode, playerName } = data;
+        if (!roomCode || !playerName) { return; }
+
         if (!rooms[roomCode]) {
             rooms[roomCode] = { players: [], spectators: [] };
         }
         const room = rooms[roomCode];
+
+        if (room.players.some(p => p.id === socket.id)) { return; } // Aynı oyuncu tekrar katılamaz
+
         if (room.players.length >= 2) {
             socket.join(roomCode);
             room.spectators.push({ id: socket.id, name: 'İzleyici' });
             socket.emit('roomState', { message: "Bu oda dolu. İzleyici olarak katıldınız." });
             return;
         }
+
         socket.join(roomCode);
         const playerInfo = { id: socket.id, name: playerName, score: 0 };
         room.players.push(playerInfo);
         console.log(`Oyuncu ${playerName}, ${roomCode} odasına katıldı. Odadaki oyuncu sayısı: ${room.players.length}`);
-        io.to(roomCode).emit('roomState', { message: `${playerName} odaya katıldı. Rakip bekleniyor...`, players: room.players });
+
+        io.to(roomCode).emit('roomState', {
+            message: `${playerName} odaya katıldı. Rakip bekleniyor...`,
+            players: room.players
+        });
+
         if (room.players.length === 2) {
             console.log(`Oda ${roomCode} dolu. Maç başlatılıyor.`);
             io.to(roomCode).emit('matchStart', room.players);
