@@ -1,55 +1,104 @@
-// Gerekli kütüphaneleri projemize dahil ediyoruz
+// Gerekli kütüphaneler
 const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
 const cors = require('cors');
 
-// Express uygulamasını oluşturuyoruz
+// Kurulum
 const app = express();
-// HTTP sunucusunu oluşturuyoruz
 const server = http.createServer(app);
-// Socket.IO'yu sunucumuza bağlıyoruz (gerçek zamanlı iletişim için)
+
+// GÜNCELLENDİ: Socket.IO için CORS ayarları
+// Artık sadece sizin sitenizden gelen bağlantılara izin verilecek.
 const io = new Server(server, {
     cors: {
-        origin: "*", // Her yerden gelen isteklere izin ver (test için)
+        origin: "https://benimlobim.site", // SADECE sizin sitenizden gelen isteklere izin ver
+        methods: ["GET", "POST"]
     }
 });
 
-// Gelen verileri JSON formatında okuyabilmek için
+// GÜNCELLENDİ: Express için CORS ayarları
+// Bu satırı da güncelleyerek izni pekiştirdik.
+app.use(cors({
+    origin: "https://benimlobim.site"
+}));
+
 app.use(express.json());
-// CORS hatalarını önlemek için
-app.use(cors());
+const PORT = 3000;
 
-const PORT = 3000; // Sunucumuzun çalışacağı kapı (port)
+// Oyunumuzun hafızası: Aktif odaları burada tutacağız
+let rooms = {};
 
-// Ana dizin: Sunucunun çalışıp çalışmadığını kontrol etmek için
-app.get('/', (req, res) => {
-    res.send('1vs1 Sunucusu başarıyla çalışıyor!');
-});
-
-// TİKTOK WEBHOOK ADRESİ: TikFinity bu adrese veri gönderecek
-app.post('/tiktok-olayi', (req, res) => {
-    // TikFinity'den gelen veri req.body içinde olacak
-    const gelenVeri = req.body;
-    
-    // Gelen veriyi sunucunun konsoluna yazdırıyoruz
-    console.log("---------------------------------");
-    console.log("TikFinity'den bir olay geldi!");
-    console.log(gelenVeri);
-    console.log("---------------------------------");
-
-    // TikFinity'e "veriyi aldım, sorun yok" mesajı gönderiyoruz
-    res.sendStatus(200);
-});
-
-
-// Bir kullanıcı websitemize bağlandığında bu kod çalışacak
+// Birisi siteye girdiğinde ve sunucuya bağlandığında
 io.on('connection', (socket) => {
-    console.log('Bir kullanıcı siteye bağlandı:', socket.id);
+    console.log('Bir kullanıcı bağlandı:', socket.id);
+
+    // Bir oyuncu bir odaya katılmak istediğinde
+    socket.on('joinRoom', (data) => {
+        const { roomCode, playerName } = data;
+        
+        // Odayı bul veya oluştur
+        if (!rooms[roomCode]) {
+            rooms[roomCode] = { players: [], spectators: [] };
+        }
+        
+        const room = rooms[roomCode];
+
+        // Eğer oda doluysa, izleyici olarak ekle
+        if (room.players.length >= 2) {
+            socket.join(roomCode);
+            room.spectators.push({ id: socket.id, name: 'İzleyici' });
+            socket.emit('roomState', { message: "Bu oda dolu. İzleyici olarak katıldınız." });
+            return;
+        }
+
+        // Oyuncuyu odaya ekle
+        socket.join(roomCode);
+        const playerInfo = {
+            id: socket.id,
+            name: playerName,
+            score: 0
+        };
+        room.players.push(playerInfo);
+        console.log(`Oyuncu ${playerName}, ${roomCode} odasına katıldı. Odadaki oyuncu sayısı: ${room.players.length}`);
+
+        // Odaya yeni durumu bildir
+        io.to(roomCode).emit('roomState', {
+            message: `${playerName} odaya katıldı. Rakip bekleniyor...`,
+            players: room.players
+        });
+
+        // Eğer oda dolduysa, maçı başlat
+        if (room.players.length === 2) {
+            console.log(`Oda ${roomCode} dolu. Maç başlatılıyor.`);
+            io.to(roomCode).emit('matchStart', room.players);
+        }
+    });
+
+    // Oyuncudan cevap geldiğinde
+    socket.on('submitAnswer', (data) => {
+        // Gelen cevabı odadaki herkese geri gönder (ana ekran bunu işleyecek)
+        io.to(data.roomCode).emit('answerReceived', data);
+    });
+
+    // Oyuncu bağlantıyı kestiğinde
+    socket.on('disconnect', () => {
+        console.log('Bir kullanıcı ayrıldı:', socket.id);
+        // Kullanıcının olduğu odayı bul ve temizle (opsiyonel, geliştirilebilir)
+        for (const roomCode in rooms) {
+            const room = rooms[roomCode];
+            const originalPlayerCount = room.players.length;
+            room.players = room.players.filter(p => p.id !== socket.id);
+            
+            // Eğer odada bir oyuncu ayrıldıysa ve artık 2'den az oyuncu varsa
+            if (originalPlayerCount === 2 && room.players.length < 2) {
+                io.to(roomCode).emit('opponentLeft', { message: "Rakibin ayrıldı." });
+            }
+        }
+    });
 });
 
-
-// Sunucuyu dinlemeye başlıyoruz
+// Sunucuyu başlat
 server.listen(PORT, () => {
-    console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor...`);
+    console.log(`Oda Sunucusu http://localhost:${PORT} adresinde çalışıyor...`);
 });
